@@ -63,6 +63,12 @@ h2 { font-size: 17px; margin: 22px 0 8px; }
 .notice { background: var(--card); border-left: 4px solid var(--blue2); padding: 10px 12px; border-radius: 6px; margin: 10px 0; font-size: 15px; }
 .err { border-left-color: var(--red); }
 ol { padding-left: 22px; } li { margin-bottom: 6px; }
+#viewer { position: fixed; inset: 0; background: #50555B; z-index: 10; display: flex; flex-direction: column; }
+.vbar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px; background: var(--card); border-bottom: 1px solid var(--line); }
+.vbar .site { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pages { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 8px calc(10px + env(safe-area-inset-bottom)); }
+#pages canvas { display: block; background: #fff; margin: 0 auto 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -102,6 +108,15 @@ ol { padding-left: 22px; } li { margin-bottom: 6px; }
   <p class="small" style="margin-top:28px"><button class="linkish" id="refresh" type="button">Refresh</button></p>
   <p class="small"><button class="linkish" id="forget" type="button">Remove the key from this device</button></p>
 </main>
+
+<div id="viewer" hidden>
+  <div class="vbar">
+    <button type="button" class="quiet" id="viewclose">Close</button>
+    <span id="viewtitle" class="site"></span>
+    <button type="button" class="quiet" id="viewsend">Send</button>
+  </div>
+  <div id="pages"></div>
+</div>
 
 <script>
 const REPO = "tonyageh/dotPublic-scanner";
@@ -258,7 +273,8 @@ function reportCard({ rec, pdf, note }) {
   r.textContent = rec.result || "Result not recorded";
   const a = document.createElement("div"); a.className = "actions";
   if (pdf) {
-    a.appendChild(button("Open", () => openFile(pdf)));
+    const open = button("Open", () => openFile(pdf, rec, open));
+    a.appendChild(open);
     const send = button("Send", () => sendFile(pdf, rec, send));
     a.appendChild(send);
   } else if (note) {
@@ -277,15 +293,58 @@ function button(text, fn) {
   b.addEventListener("click", fn); return b;
 }
 
-// GitHub gives a short-lived address for a file in a private repository.
-// Opening that address shows the PDF in the phone's own viewer.
-async function openFile(f) {
-  const win = window.open("", "_blank");
+// Reports open inside the app. A home-screen app cannot hand a private file
+// to Safari, and GitHub's own address for one came back as a blank page
+// (October 2026), so the pages are drawn here with Mozilla's PDF.js.
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+let pdfjsReady = null;
+function loadPdfJs() {
+  if (!pdfjsReady) pdfjsReady = new Promise((resolve, reject) => {
+    const sc = document.createElement("script");
+    sc.src = PDFJS + "pdf.min.js";
+    sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; resolve(window.pdfjsLib); };
+    sc.onerror = () => { pdfjsReady = null; reject(new Error("The PDF viewer could not be loaded. Check the connection and try again.")); };
+    document.head.appendChild(sc);
+  });
+  return pdfjsReady;
+}
+
+async function openFile(f, rec, btn) {
+  btn.disabled = true; btn.textContent = "Opening";
   try {
-    const res = await gh(f.url);
-    const info = await res.json();
-    if (win) win.location = info.download_url; else window.location = info.download_url;
-  } catch (e) { if (win) win.close(); say(e.message, true); }
+    const [lib, file] = await Promise.all([loadPdfJs(), getPdf(f)]);
+    const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const view = $("viewer"), pages = $("pages");
+    pages.innerHTML = "";
+    $("viewtitle").textContent = rec.site;
+    $("viewsend").onclick = () => sendFile(f, rec, $("viewsend"));
+    $("viewsend").textContent = "Send";
+    show(view, true); document.body.style.overflow = "hidden";
+    const width = pages.clientWidth;
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const watch = new IntersectionObserver((entries) => {
+      entries.forEach(async (en) => {
+        if (!en.isIntersecting || en.target.dataset.done) return;
+        en.target.dataset.done = "1"; watch.unobserve(en.target);
+        const page = await doc.getPage(Number(en.target.dataset.n));
+        const vp = page.getViewport({ scale: (width / page.getViewport({ scale: 1 }).width) * ratio });
+        const c = en.target; c.width = vp.width; c.height = vp.height;
+        await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+      });
+    }, { root: pages, rootMargin: "800px 0px" });
+    const first = await doc.getPage(1);
+    const aspect = first.getViewport({ scale: 1 }).height / first.getViewport({ scale: 1 }).width;
+    for (let n = 1; n <= doc.numPages; n++) {
+      const c = document.createElement("canvas");
+      c.dataset.n = n; c.style.width = "100%"; c.style.aspectRatio = String(1 / aspect);
+      pages.appendChild(c); watch.observe(c);
+    }
+  } catch (e) { say(e.message, true); }
+  btn.disabled = false; btn.textContent = "Open";
+}
+
+function closeViewer() {
+  show($("viewer"), false); document.body.style.overflow = ""; $("pages").innerHTML = "";
 }
 
 async function getPdf(f) {
@@ -352,6 +411,7 @@ $("forget").addEventListener("click", () => {
   try { localStorage.removeItem(KEY_NAME); } catch (e) {}
   key = ""; show($("app"), false); show($("setup"), true);
 });
+$("viewclose").addEventListener("click", closeViewer);
 $("refresh").addEventListener("click", () => { loadLibrary(); checkRuns(); });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && key) { loadLibrary(); checkRuns(); }
