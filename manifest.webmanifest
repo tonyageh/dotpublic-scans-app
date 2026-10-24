@@ -1,0 +1,13 @@
+{
+  "name": "dotPublic scans",
+  "short_name": "dotPublic scans",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F5F6F7",
+  "theme_color": "#1F4D78",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
