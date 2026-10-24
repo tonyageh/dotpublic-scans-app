@@ -296,7 +296,9 @@ function button(text, fn) {
 // Reports open inside the app. A home-screen app cannot hand a private file
 // to Safari, and GitHub's own address for one came back as a blank page
 // (October 2026), so the pages are drawn here with Mozilla's PDF.js.
-const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+// Kept beside this page rather than fetched from a public library, as the
+// dotPublic standards ask of everyone else.
+const PDFJS = "pdfjs/";
 let pdfjsReady = null;
 function loadPdfJs() {
   if (!pdfjsReady) pdfjsReady = new Promise((resolve, reject) => {
